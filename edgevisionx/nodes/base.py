@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import copy
+from typing import Dict, Any
 from abc import ABC, abstractmethod
-from typing import Dict, Tuple, List, Union, Optional, Any
+
+from edgevisionx.utils.logger import EVXLogger
 
 
 class Node(ABC):
@@ -13,6 +15,7 @@ class Node(ABC):
         self.name = config.get("name", self.__class__.__name__)
         self._initialized = False
         self._metrics = {}
+        self.logger = EVXLogger.get_logger(self.name)
 
     @abstractmethod
     def setup(self) -> None:

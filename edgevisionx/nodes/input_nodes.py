@@ -1,22 +1,41 @@
 from __future__ import annotations
 
-from threading import Lock
 import time
 import cv2
-from typing import Dict, Tuple, List, Optional, Union
-from base import Node
+from datetime import datetime
+
+from edgevisionx.nodes.base import Node
+from edgevisionx.utils import ThreadingLocked
 
 
 class CameraNode(Node):
     """
     Camera capture node with automatic reconnection, FPS control, and health monitoring.
 
-    User config:
-        source: int | str - Camera index or RTSP URL
-        width: int - Frame width (default: 640)
-        height: int - Frame height (default: 480)
-        fps: int - Target FPS (default: 30)
-        reconnect_attempts: int - Max reconnection tries (default: 5)
+    Args:
+        config (Dict[str, Any]): Configuration dictionary with the following keys:
+            source (int | str, optional): Camera index (0, 1, ...) or video file path/RTSP URL.
+                Defaults to 0.
+            width (int, optional): Target frame width in pixels. Defaults to 640.
+            height (int, optional): Target frame height in pixels. Defaults to 480.
+            fps (int, optional): Target frames per second. Defaults to 30.
+
+    Returns:
+        Dict[str, Any]: Dictionary containing:
+            - 'frame' (np.ndarray): Captured frame
+            - 'frame_id' (int): Sequential frame identifier
+            - 'timestamp' (float): Capture timestamp
+            - 'shape' (tuple): Frame dimensions (height, width, channels)
+
+    Example:
+        >>> node = CameraNode(config={'source': 0, 'width': 1280, 'height': 720})
+        >>> node.setup()
+        >>> output = node()
+        >>> print(output['frame_id'], output['shape'])
+
+    Note:
+        For video files, the source should be a file path string. For live cameras,
+        use an integer index (typically 0 for the default camera).
     """
 
     def setup(self):
@@ -26,9 +45,8 @@ class CameraNode(Node):
         self.target_fps = self.config.get("fps", 30)
 
         self.cap = None
-        self._lock = Lock()
 
-        self._frame_buffer = None
+        self._frame_buffer = None  # TODO: Add frame buffer logic
         self._metrics.update({
             'fps_actual': 0,
             'health_status': 'initializing',
@@ -36,13 +54,13 @@ class CameraNode(Node):
         })
 
         if not self._open_camera():
-            raise RuntimeError(
+            self.logger.error(
                 f"Failed to open camera source: {self.source}. "
                 f"Make sure the camera is connected and accessible. "
             )
         self._initialized = True
 
-    def _open_camera(self):
+    def _open_camera(self) -> bool:
         """Internal method to setup the camera"""
         self.cap = cv2.VideoCapture(self.source)
 
@@ -57,12 +75,14 @@ class CameraNode(Node):
         for _ in range(5):
             ret, _ = self.cap.read()
             if not ret:
-                print("Warning: Camera opened but failed to read frames during warmup")
+                self.logger.warning(
+                    "Camera opened but failed to read frames during warmup")
                 return False
 
         self._metrics['health_status'] = 'healthy'
         return True
 
+    @ThreadingLocked()
     def __call__(self):
         """
         This function would return an image frame captured using the camera
@@ -72,7 +92,7 @@ class CameraNode(Node):
 
         if not ret:
             self._metrics['health_status'] = 'error'
-            raise RuntimeError(
+            self.logger.error(
                 "Failed to grab frame from camera. Camera may be disconnected.")
 
         self._metrics['frame_count'] += 1
@@ -80,13 +100,13 @@ class CameraNode(Node):
         output = {
             'frame': frame,
             'frame_id': self._metrics['frame_count'],
-            'timestamp': time.time(),
+            'timestamp': datetime.fromtimestamp(int(time.time())).strftime("%Y-%m-%d %H:%M:%S"),
             'shape': frame.shape,
         }
 
         return output
 
-    def release(self):
+    def teardown(self):
         """Release the video capture object"""
         if self.cap is not None:
             self.cap.release()
